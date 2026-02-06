@@ -14,10 +14,10 @@ static void protopirate_scene_saved_info_widget_callback(
 
     if((result == GuiButtonTypeLeft) && (type == InputTypeShort)) {
 #ifdef ENABLE_EMULATE_FEATURE
-            if(!is_emu_off) {
-                view_dispatcher_send_custom_event(
-                    app->view_dispatcher, ProtoPirateCustomEventSavedInfoEmulate);
-            }
+        if(!is_emu_off) {
+            view_dispatcher_send_custom_event(
+                app->view_dispatcher, ProtoPirateCustomEventSavedInfoEmulate);
+        }
 #endif
     } else if(result == GuiButtonTypeRight) {
         switch(type) {
@@ -67,7 +67,6 @@ void protopirate_scene_saved_info_on_enter(void* context) {
     }
 
     FURI_LOG_I(TAG, "Strings allocated");
-    furi_thread_yield();
 
     // Open storage
     FURI_LOG_I(TAG, "Opening storage...");
@@ -80,7 +79,6 @@ void protopirate_scene_saved_info_on_enter(void* context) {
     }
 
     FURI_LOG_I(TAG, "Storage opened");
-    furi_thread_yield();
 
     // Allocate flipper format
     FURI_LOG_I(TAG, "Allocating FF...");
@@ -93,7 +91,6 @@ void protopirate_scene_saved_info_on_enter(void* context) {
     }
 
     FURI_LOG_I(TAG, "FF allocated");
-    furi_thread_yield();
 
     // Open file
     FURI_LOG_I(TAG, "Opening file...");
@@ -105,7 +102,6 @@ void protopirate_scene_saved_info_on_enter(void* context) {
     }
 
     FURI_LOG_I(TAG, "File opened, reading...");
-    furi_thread_yield();
 
     // Read fields
     uint32_t temp_data;
@@ -125,14 +121,19 @@ void protopirate_scene_saved_info_on_enter(void* context) {
     } else {
         is_emu_off = false;
     }
-    furi_thread_yield();
 
     flipper_format_rewind(ff);
     if(flipper_format_read_uint32(ff, "Frequency", &temp_data, 1)) {
         furi_string_cat_printf(
             info_str, "Freq: %lu.%02lu MHz\n", temp_data / 1000000, (temp_data % 1000000) / 10000);
     }
-    furi_thread_yield();
+
+    flipper_format_rewind(ff);
+    if(flipper_format_read_string(ff, "Preset", temp_str)) {
+        // Convert full preset name to short name
+        const char* preset_name = preset_name_to_short(furi_string_get_cstr(temp_str));
+        furi_string_cat_printf(info_str, "Modulation: %s\n", preset_name);
+    }
 
     flipper_format_rewind(ff);
     if(flipper_format_read_uint32(ff, "Serial", &temp_data, 1)) {
@@ -148,7 +149,6 @@ void protopirate_scene_saved_info_on_enter(void* context) {
     if(flipper_format_read_uint32(ff, "Cnt", &temp_data, 1)) {
         furi_string_cat_printf(info_str, "Counter: %04lX\n", temp_data);
     }
-    furi_thread_yield();
 
     flipper_format_rewind(ff);
     if(flipper_format_read_uint32(ff, "BS", &temp_data, 1)) {
@@ -210,13 +210,11 @@ cleanup:
     }
 
     FURI_LOG_I(TAG, "Storage closed");
-    furi_thread_yield();
 
     // Now do widget operations
     if(success && info_str && furi_string_size(info_str) > 0) {
         FURI_LOG_I(TAG, "Adding scroll element");
         widget_add_text_scroll_element(app->widget, 0, 0, 128, 50, furi_string_get_cstr(info_str));
-        furi_thread_yield();
 
 #ifdef ENABLE_EMULATE_FEATURE
         if(!is_emu_off) {

@@ -12,6 +12,8 @@ typedef struct {
     uint32_t serial;
     uint8_t original_button;
     FuriString* protocol_name;
+    const char* preset;
+    uint32_t freq;
     FlipperFormat* flipper_format;
     SubGhzTransmitter* transmitter;
     bool is_transmitting;
@@ -53,29 +55,6 @@ void stop_tx(ProtoPirateApp* app) {
 
     FURI_LOG_I(TAG, "Transmission stopped, state set to IDLE");
     notification_message(app->notifications, &sequence_blink_stop);
-}
-
-// Convert full FuriHal preset name to short name used by settings
-static const char* preset_name_to_short(const char* preset_name) {
-    if(!preset_name) return "AM650";
-
-    // Check for full FuriHal names
-    if(strstr(preset_name, "Ook650") || strstr(preset_name, "OOK650")) return "AM650";
-    if(strstr(preset_name, "Ook270") || strstr(preset_name, "OOK270")) return "AM270";
-    if(strstr(preset_name, "2FSKDev238") || strstr(preset_name, "Dev238")) return "FM238";
-    if(strstr(preset_name, "2FSKDev12K") || strstr(preset_name, "Dev12K")) return "FM12K";
-    if(strstr(preset_name, "2FSKDev476") || strstr(preset_name, "Dev476")) return "FM476";
-
-    // Check for short names already
-    if(strcmp(preset_name, "AM650") == 0) return "AM650";
-    if(strcmp(preset_name, "AM270") == 0) return "AM270";
-    if(strcmp(preset_name, "FM238") == 0) return "FM238";
-    if(strcmp(preset_name, "FM12K") == 0) return "FM12K";
-    if(strcmp(preset_name, "FM476") == 0) return "FM476";
-    if(strcmp(preset_name, "FuriHalSubGhzPresetCustom") == 0) return "Custom";
-
-    // Default fallback
-    return "AM650";
 }
 
 static void emulate_context_free(void) {
@@ -234,10 +213,18 @@ static void protopirate_emulate_draw_callback(Canvas* canvas, void* context) {
     snprintf(info_str, sizeof(info_str), "SN:%08lX", (unsigned long)emulate_context->serial);
     canvas_draw_str(canvas, 2, 20, info_str);
 
+    snprintf(
+        info_str,
+        sizeof(info_str),
+        "F:%lu.%02lu",
+        emulate_context->freq / 1000000,
+        (emulate_context->freq % 1000000) / 10000);
+    canvas_draw_str(canvas, 2, 30, info_str);
+
     // Counter - left aligned
     snprintf(
         info_str, sizeof(info_str), "CNT:%04lX", (unsigned long)emulate_context->current_counter);
-    canvas_draw_str(canvas, 72, 20, info_str);
+    canvas_draw_str(canvas, 68, 20, info_str);
 
     // Increment on right if changed
     if(emulate_context->current_counter > emulate_context->original_counter) {
@@ -246,8 +233,11 @@ static void protopirate_emulate_draw_callback(Canvas* canvas, void* context) {
             sizeof(info_str),
             "+%ld",
             (long)(emulate_context->current_counter - emulate_context->original_counter));
-        canvas_draw_str(canvas, 116, 20, info_str);
+        canvas_draw_str(canvas, 112, 20, info_str);
     }
+
+    snprintf(info_str, sizeof(info_str), "%s", emulate_context->preset);
+    canvas_draw_str(canvas, 95, 30, info_str);
 
     // Divider
     //canvas_draw_line(canvas, 0, 34, 127, 34);
@@ -404,6 +394,32 @@ void protopirate_scene_emulate_on_enter(void* context) {
 
         emulate_context->flipper_format = ff;
 
+        // Read frequency and preset from the saved file
+        uint32_t frequency = 433920000;
+        FuriString* preset_str = furi_string_alloc();
+
+        flipper_format_rewind(ff);
+        if(!flipper_format_read_uint32(ff, "Frequency", &frequency, 1)) {
+            FURI_LOG_W(TAG, "Failed to read frequency, using default 433.92MHz");
+        }
+
+        flipper_format_rewind(ff);
+        if(!flipper_format_read_string(ff, "Preset", preset_str)) {
+            FURI_LOG_W(TAG, "Failed to read preset, using AM650");
+            furi_string_set(preset_str, "AM650");
+        }
+
+        // Convert full preset name to short name
+        emulate_context->preset = preset_name_to_short(furi_string_get_cstr(preset_str));
+        FURI_LOG_I(
+            TAG,
+            "Using frequency %lu Hz, preset %s (from %s)",
+            (unsigned long)frequency,
+            emulate_context->preset,
+            furi_string_get_cstr(preset_str));
+        emulate_context->freq = frequency;
+        furi_string_free(preset_str);
+
         // Read protocol name
         flipper_format_rewind(ff);
         if(!flipper_format_read_string(ff, "Protocol", emulate_context->protocol_name)) {
@@ -546,40 +562,13 @@ bool protopirate_scene_emulate_on_event(void* context, SceneManagerEvent event) 
                     break;
                 }
 
-                // Read frequency and preset from the saved file
-                uint32_t frequency = 433920000;
-                FuriString* preset_str = furi_string_alloc();
-
-                flipper_format_rewind(emulate_context->flipper_format);
-                if(!flipper_format_read_uint32(
-                       emulate_context->flipper_format, "Frequency", &frequency, 1)) {
-                    FURI_LOG_W(TAG, "Failed to read frequency, using default 433.92MHz");
-                }
-
-                flipper_format_rewind(emulate_context->flipper_format);
-                if(!flipper_format_read_string(
-                       emulate_context->flipper_format, "Preset", preset_str)) {
-                    FURI_LOG_W(TAG, "Failed to read preset, using AM650");
-                    furi_string_set(preset_str, "AM650");
-                }
-
-                // Convert full preset name to short name
-                const char* preset_name_raw = furi_string_get_cstr(preset_str);
-                const char* preset_name = preset_name_to_short(preset_name_raw);
-                FURI_LOG_I(
-                    TAG,
-                    "Using frequency %lu Hz, preset %s (from %s)",
-                    (unsigned long)frequency,
-                    preset_name,
-                    preset_name_raw);
-
                 //Preset Loading
                 uint8_t* preset_data = NULL;
                 bool free_custom_data = false;
 
                 //Use the Custom Preset data from the file, if we have it.
                 uint32_t uint32_array_size;
-                if(strcmp(preset_name, "Custom") == 0) {
+                if(strcmp(emulate_context->preset, "Custom") == 0) {
                     flipper_format_rewind(emulate_context->flipper_format);
                     if(flipper_format_get_value_count(
                            emulate_context->flipper_format,
@@ -598,25 +587,25 @@ bool protopirate_scene_emulate_on_event(void* context, SceneManagerEvent event) 
                             free_custom_data = false;
                             preset_data =
                                 subghz_setting_get_preset_data_by_name(app->setting, "AM650");
-                            preset_name = "AM650";
+                            emulate_context->preset = "AM650";
                         }
                     }
                 } else {
                     //NOT A CUStoM PRESET
                     // Get preset data with fallback chain
-                    preset_data =
-                        subghz_setting_get_preset_data_by_name(app->setting, preset_name);
+                    preset_data = subghz_setting_get_preset_data_by_name(
+                        app->setting, emulate_context->preset);
                 }
 
                 if(!preset_data) {
-                    FURI_LOG_W(TAG, "Preset %s not found, trying AM650", preset_name);
+                    FURI_LOG_W(TAG, "Preset %s not found, trying AM650", emulate_context->preset);
                     preset_data = subghz_setting_get_preset_data_by_name(app->setting, "AM650");
-                    preset_name = "AM650";
+                    emulate_context->preset = "AM650";
                 }
                 if(!preset_data) {
                     FURI_LOG_W(TAG, "AM650 not found, trying FM476");
                     preset_data = subghz_setting_get_preset_data_by_name(app->setting, "FM476");
-                    preset_name = "FM476";
+                    emulate_context->preset = "FM476";
                 }
 
                 if(preset_data) {
@@ -633,7 +622,7 @@ bool protopirate_scene_emulate_on_event(void* context, SceneManagerEvent event) 
                     subghz_devices_idle(app->txrx->radio_device);
                     subghz_devices_load_preset(
                         app->txrx->radio_device, FuriHalSubGhzPresetCustom, preset_data);
-                    subghz_devices_set_frequency(app->txrx->radio_device, frequency);
+                    subghz_devices_set_frequency(app->txrx->radio_device, emulate_context->freq);
 
                     // Start transmission
                     subghz_devices_set_tx(app->txrx->radio_device);
@@ -649,8 +638,8 @@ bool protopirate_scene_emulate_on_event(void* context, SceneManagerEvent event) 
                         FURI_LOG_I(
                             TAG,
                             "Started transmission: freq=%lu, preset=%s",
-                            (unsigned long)frequency,
-                            preset_name);
+                            (unsigned long)emulate_context->freq,
+                            emulate_context->preset);
                     } else {
                         FURI_LOG_E(TAG, "Failed to start async TX");
                         subghz_devices_idle(app->txrx->radio_device);
@@ -661,7 +650,6 @@ bool protopirate_scene_emulate_on_event(void* context, SceneManagerEvent event) 
                     notification_message(app->notifications, &sequence_error);
                 }
 
-                furi_string_free(preset_str);
                 if(free_custom_data)
                     free(preset_data); //We have used the preset, I alloced it I have to free.
 
