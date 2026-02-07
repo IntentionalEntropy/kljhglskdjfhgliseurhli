@@ -1,0 +1,6 @@
+mkdir -p .github/workflows
+nano .github/workflows/release-ufbt.yml   # or your editor
+# paste YAML, save
+git add .github/workflows/release-ufbt.yml
+git commit -m "Build .fap with uFBT on GitHub Releases"
+git push
