@@ -1,6 +1,49 @@
-mkdir -p .github/workflows
-nano .github/workflows/release-ufbt.yml   # or your editor
-# paste YAML, save
-git add .github/workflows/release-ufbt.yml
-git commit -m "Build .fap with uFBT on GitHub Releases"
-git push
+name: "Release: build .fap with uFBT"
+
+on:
+  release:
+    types: [published]
+
+  # Lets you re-run for an existing tag/release
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to upload assets to (e.g. v1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build with uFBT
+        id: build
+        uses: flipperdevices/flipperzero-ufbt-action@v0.1
+        with:
+          # 'release' = latest published official firmware SDK
+          sdk-channel: release
+          task: build
+          # If your app lives in a subfolder, set this:
+          # path: path/to/app
+
+      - name: Upload .fap/.fal to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          files: ${{ steps.build.outputs.fap-artifacts }}
+          fail_on_unmatched_files: true
